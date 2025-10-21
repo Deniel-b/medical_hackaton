@@ -1,9 +1,10 @@
 """
 Plot stacked EEG traces for epochs extracted from an EDF file using pyedflib.
 
-Each annotation in the EDF is treated as an epoch. Channels are stacked with
-vertical offsets so every column on the time axis corresponds to one epoch,
-similar to классические распечатки ЭЭГ.
+Each annotation in the EDF is treated as an epoch. Каналы формируются по
+классическому «double banana» монтажу, затем для каждого condition
+(описание аннотации) строится отдельная фигура: эпизоды одного condition
+склеиваются вдоль времени, а между ними отображаются вертикальные границы.
 """
 
 from __future__ import annotations
@@ -179,6 +180,7 @@ def plot_stacked(
     sfreq: float,
     samples_per_epoch: int,
     max_channels: int | None,
+    title: str,
 ) -> None:
     n_samples, n_channels = data.shape
     if max_channels is not None:
@@ -215,26 +217,35 @@ def plot_stacked(
     ax.set_ylabel("Каналы")
     ax.set_yticks(offsets)
     ax.set_yticklabels(channel_names)
-    ax.set_title("Эпохи EDF, отображённые по каналам")
+    ax.set_title(title)
     ax.grid(False)
     plt.tight_layout()
-    plt.show()
 
 
 def main() -> None:
     args = parse_args()
     epochs, channels, labels, sfreq = read_epochs(args.edf_path, args.max_epochs)
     epochs, bipolar_names = apply_bipolar_montage(epochs, channels, DOUBLE_BANANA_PAIRS)
-    times, data = flatten_epochs(epochs, sfreq)
-    plot_stacked(
-        times,
-        data,
-        bipolar_names,
-        labels,
-        sfreq,
-        epochs.shape[2],
-        max_channels=args.max_channels,
-    )
+    unique_conditions = sorted(set(labels))
+    for condition in unique_conditions:
+        indices = [idx for idx, label in enumerate(labels) if label == condition]
+        if not indices:
+            continue
+        print(f"Condition {condition}: {len(indices)} эпох(и)")
+        subset_epochs = epochs[indices]
+        subset_labels = [f"{condition} #{i + 1}" for i in range(len(indices))]
+        times, data = flatten_epochs(subset_epochs, sfreq)
+        plot_stacked(
+            times,
+            data,
+            bipolar_names,
+            subset_labels,
+            sfreq,
+            subset_epochs.shape[2],
+            max_channels=args.max_channels,
+            title=f"Condition: {condition}",
+        )
+    plt.show()
 
 
 if __name__ == "__main__":
