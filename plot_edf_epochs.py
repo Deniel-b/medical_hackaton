@@ -25,7 +25,9 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "edf_path",
         type=Path,
-        help="Путь к EDF файлу.",
+        nargs="?",
+        default=None,
+        help="Путь к EDF файлу. Если не указан, появится диалог выбора.",
     )
     parser.add_argument(
         "--max-epochs",
@@ -224,7 +226,23 @@ def plot_stacked(
 
 def main() -> None:
     args = parse_args()
-    epochs, channels, labels, sfreq = read_epochs(args.edf_path, args.max_epochs)
+    edf_path = args.edf_path
+    if edf_path is None:
+        from tkinter import Tk, filedialog
+
+        root = Tk()
+        root.withdraw()
+        file_path = filedialog.askopenfilename(
+            title="Выберите EDF файл",
+            filetypes=(("EDF files", "*.edf"), ("All files", "*.*")),
+        )
+        root.destroy()
+        if not file_path:
+            print("Файл не выбран, завершение работы.")
+            return
+        edf_path = Path(file_path)
+
+    epochs, channels, labels, sfreq = read_epochs(edf_path, args.max_epochs)
     epochs, bipolar_names = apply_bipolar_montage(epochs, channels, DOUBLE_BANANA_PAIRS)
     unique_conditions = sorted(set(labels))
     for condition in unique_conditions:
