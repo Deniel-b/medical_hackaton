@@ -1,0 +1,19 @@
+# EEG Movement Classification Pipeline - Dependencies
+
+# Основные библиотеки для обработки данных
+numpy>=1.21.0
+pandas>=1.3.0
+
+# Машинное обучение
+tensorflow>=2.10.0
+scikit-learn>=1.0.0
+
+# Обработка EEG данных
+mne>=1.0.0
+
+# Визуализация
+matplotlib>=3.5.0
+seaborn>=0.11.0
+
+# Дополнительные зависимости для MNE
+scipy>=1.7.0

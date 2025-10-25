@@ -1,9 +1,11 @@
 """
 Plot stacked EEG traces for epochs extracted from an EDF file using pyedflib.
 
-Each annotation in the EDF is treated as an epoch. Channels are stacked with
-vertical offsets so every column on the time axis corresponds to one epoch,
-similar to классические распечатки ЭЭГ.
+Each EDF annotation is treated as an epoch. Signals are converted to the
+classic double-banana bipolar montage and, for every unique annotation
+label (condition), a separate figure is drawn with the corresponding epochs
+concatenated on the time axis. Epoch boundaries are marked with vertical
+lines so each column represents a distinct epoch.
 """
 
 from __future__ import annotations
@@ -19,24 +21,38 @@ from pyedflib import EdfReader
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Визуализация эпох из EDF без использования mne/json."
+        description="Visualise EDF epochs per condition using a double-banana montage."
     )
     parser.add_argument(
         "edf_path",
         type=Path,
-        help="Путь к EDF файлу.",
+        nargs="?",
+        default=None,
+        help="Path to the EDF file. If omitted, a file dialog will open.",
     )
     parser.add_argument(
         "--max-epochs",
         type=int,
         default=None,
-        help="Ограничить количество отображаемых эпох.",
+        help="Limit how many epochs per condition are displayed.",
     )
     parser.add_argument(
         "--max-channels",
         type=int,
         default=None,
-        help="Ограничить количество каналов на графике.",
+        help="Limit how many bipolar channels are displayed.",
+    )
+    parser.add_argument(
+        "--kalman-process-var",
+        type=float,
+        default=1e-4,
+        help="Process noise variance for the Kalman filter (set ≤0 to disable).",
+    )
+    parser.add_argument(
+        "--kalman-measurement-var",
+        type=float,
+        default=1e-2,
+        help="Measurement noise variance factor for the Kalman filter.",
     )
     return parser.parse_args()
 
@@ -179,6 +195,7 @@ def plot_stacked(
     sfreq: float,
     samples_per_epoch: int,
     max_channels: int | None,
+    title: str,
 ) -> None:
     n_samples, n_channels = data.shape
     if max_channels is not None:
@@ -215,26 +232,78 @@ def plot_stacked(
     ax.set_ylabel("Каналы")
     ax.set_yticks(offsets)
     ax.set_yticklabels(channel_names)
-    ax.set_title("Эпохи EDF, отображённые по каналам")
+    ax.set_title(title)
     ax.grid(False)
     plt.tight_layout()
-    plt.show()
+
+
+def apply_kalman_filter(
+    data: np.ndarray, process_var: float, measurement_var: float
+) -> np.ndarray:
+    if process_var <= 0 or measurement_var <= 0:
+        return data
+
+    n_samples, n_channels = data.shape
+    smoothed = np.empty_like(data)
+
+    for ch in range(n_channels):
+        measurements = data[:, ch]
+        estimate = measurements[0]
+        measurement_noise = measurement_var * (np.var(measurements) + 1e-6)
+        error_cov = measurement_noise
+        smoothed[0, ch] = estimate
+
+        for idx in range(1, n_samples):
+            error_cov += process_var
+            kalman_gain = error_cov / (error_cov + measurement_noise)
+            estimate = estimate + kalman_gain * (measurements[idx] - estimate)
+            error_cov = (1.0 - kalman_gain) * error_cov
+            smoothed[idx, ch] = estimate
+
+    return smoothed
 
 
 def main() -> None:
     args = parse_args()
-    epochs, channels, labels, sfreq = read_epochs(args.edf_path, args.max_epochs)
+    edf_path = args.edf_path
+    if edf_path is None:
+        from tkinter import Tk, filedialog
+
+        root = Tk()
+        root.withdraw()
+        file_path = filedialog.askopenfilename(
+            title="Выберите EDF файл",
+            filetypes=(("EDF files", "*.edf"), ("All files", "*.*")),
+        )
+        root.destroy()
+        if not file_path:
+            print("Файл не выбран, завершение работы.")
+            return
+        edf_path = Path(file_path)
+
+    epochs, channels, labels, sfreq = read_epochs(edf_path, args.max_epochs)
     epochs, bipolar_names = apply_bipolar_montage(epochs, channels, DOUBLE_BANANA_PAIRS)
-    times, data = flatten_epochs(epochs, sfreq)
-    plot_stacked(
-        times,
-        data,
-        bipolar_names,
-        labels,
-        sfreq,
-        epochs.shape[2],
-        max_channels=args.max_channels,
-    )
+    unique_conditions = sorted(set(labels))
+    for condition in unique_conditions:
+        indices = [idx for idx, label in enumerate(labels) if label == condition]
+        if not indices:
+            continue
+        print(f"Condition {condition}: {len(indices)} эпох(и)")
+        subset_epochs = epochs[indices]
+        subset_labels = [f"{condition} #{i + 1}" for i in range(len(indices))]
+        times, data = flatten_epochs(subset_epochs, sfreq)
+        data = apply_kalman_filter(data, args.kalman_process_var, args.kalman_measurement_var)
+        plot_stacked(
+            times,
+            data,
+            bipolar_names,
+            subset_labels,
+            sfreq,
+            subset_epochs.shape[2],
+            max_channels=args.max_channels,
+            title=f"Condition: {condition}",
+        )
+    plt.show()
 
 
 if __name__ == "__main__":
